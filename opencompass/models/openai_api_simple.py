@@ -1,13 +1,17 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Union
+import warnings
+
 import openai
 from openai import OpenAI
+from azure.ai.inference import ChatCompletionsClient
+from azure.core.credentials import AzureKeyCredential
 
 from opencompass.utils.prompt import PromptList
-
-from .base_api import BaseAPIModel
 from opencompass.registry import MODELS
+from .base_api import BaseAPIModel
+
 
 PromptType = Union[PromptList, str]
 
@@ -20,6 +24,7 @@ class SimpleOpenAI(BaseAPIModel):
                  path: str,
                  api_key: str,
                  base_url: str,
+                 api_type: str = 'openai',
                  max_concurrency: int = 5,
                  query_per_second: int = 2,
                  max_seq_len: int = 8192,
@@ -30,6 +35,7 @@ class SimpleOpenAI(BaseAPIModel):
                      'temperature': 0.7,
                      'top_p': 0.9,
                      'top_k': 0,
+                     'verbose': False,
                  }):
         super().__init__(path=path,
                          max_seq_len=max_seq_len,
@@ -48,6 +54,7 @@ class SimpleOpenAI(BaseAPIModel):
         self.max_concurrency = max_concurrency
         self.temperature = generation_kwargs['temperature']
         self.max_tokens = max_seq_len
+        self.type = api_type
 
     def generate(
         self,
@@ -96,20 +103,32 @@ class SimpleOpenAI(BaseAPIModel):
                 msg ['content'] = item['prompt']
 
                 messages.append(msg)
-        print(f"Messages:{messages}")
+        if self.verbose:
+            print(f"Messages:{messages}")
 
-        
-        client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=float(self.timeout))
+        if self.type == 'openai':
+            client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=float(self.timeout))
+        elif self.type == 'azure':
+            client = ChatCompletionsClient(endpoint=self.base_url, credential=AzureKeyCredential(self.api_key))
         trial = 0
         while trial < self.retry:
             # self.acquire()
             try:
-                response = client.chat.completions.create(
+                if self.type == 'azure':
+                    response = client.complete(
                         model=self.path,
                         messages=messages,
-                        stream=True
-                        # temperature=self.temperature,
-                        # max_tokens=self.max_tokens
+                        temperature=self.temperature,
+                        stream=True,
+                        max_tokens=self.max_tokens
+                    )
+                else:
+                    response = client.chat.completions.create(
+                        model=self.path,
+                        messages=messages,
+                        stream=True,
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens
                     )
                 reasoning_content = ""  # 定义完整思考过程
                 answer_content = ""     # 定义完整回复
@@ -117,13 +136,15 @@ class SimpleOpenAI(BaseAPIModel):
                 for chunk in response:
                     # 如果chunk.choices为空，则打印usage
                     if not chunk.choices:
-                        print("\nUsage:")
-                        print(chunk.usage)
+                        if self.verbose:
+                            print("\nUsage:")
+                            print(chunk.usage)
                     else:
                         delta = chunk.choices[0].delta
                         # 打印思考过程
                         if hasattr(delta, 'reasoning_content') and delta.reasoning_content != None:
-                            print(delta.reasoning_content, end='', flush=True)
+                            if self.verbose:
+                                print(delta.reasoning_content, end='', flush=True)
                             if delta.reasoning_content:
                                 reasoning_content += delta.reasoning_content
                         else:
@@ -132,7 +153,8 @@ class SimpleOpenAI(BaseAPIModel):
                                 print("\n" + "=" * 20 + "完整回复" + "=" * 20 + "\n")
                                 is_answering = True
                             # 打印回复过程
-                            print(delta.content, end='', flush=True)
+                            if self.verbose:
+                                print(delta.content, end='', flush=True)
                             if delta.content:
                                 answer_content += delta.content
                 return answer_content
@@ -142,12 +164,14 @@ class SimpleOpenAI(BaseAPIModel):
             except Exception as e:
                 exception_backoff = 2**trial  # expontial back off
                 print(
-                    f"Rate limit exception so wait and retry {trial} after {exception_backoff} sec",
-                    e,
+                    f"Rate limit exception so wait and retry {trial} after {exception_backoff} sec"
                 )
+                print(e)
                 time.sleep(exception_backoff)
                 trial += 1
                 
             # self.release()
 
-        raise RuntimeError(response)
+
+        warnings.warn("Failed to generate response.")
+        return "" 
