@@ -52,9 +52,10 @@ class SimpleOpenAI(BaseAPIModel):
         self.base_url = base_url
         self.timeout = timeout
         self.max_concurrency = max_concurrency
-        self.temperature = generation_kwargs['temperature']
         self.max_tokens = max_seq_len
         self.type = api_type
+        self.temperature = generation_kwargs['temperature']
+        self.verbose = generation_kwargs['verbose']
 
     def generate(
         self,
