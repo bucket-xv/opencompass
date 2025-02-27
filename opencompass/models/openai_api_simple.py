@@ -29,11 +29,11 @@ class SimpleOpenAI(BaseAPIModel):
                  query_per_second: int = 2,
                  max_seq_len: int = 8192,
                  meta_template: Optional[Dict] = None,
-                 retry: int = 3,
+                 retry: int = 10,
                  timeout: int = 60,
                  generation_kwargs: Dict = {
-                     'temperature': 0.7,
-                     'top_p': 0.9,
+                     'temperature': 0.6,
+                     'top_p': 0.95,
                      'top_k': 0,
                      'verbose': False,
                  }):
@@ -55,6 +55,7 @@ class SimpleOpenAI(BaseAPIModel):
         self.max_tokens = max_seq_len
         self.type = api_type
         self.temperature = generation_kwargs['temperature']
+        self.top_p = generation_kwargs['top_p']
         self.verbose = generation_kwargs['verbose']
 
     def generate(
@@ -120,6 +121,7 @@ class SimpleOpenAI(BaseAPIModel):
                         model=self.path,
                         messages=messages,
                         temperature=self.temperature,
+                        top_p=self.top_p,
                         stream=True,
                         max_tokens=self.max_tokens
                     )
@@ -129,6 +131,7 @@ class SimpleOpenAI(BaseAPIModel):
                         messages=messages,
                         stream=True,
                         temperature=self.temperature,
+                        top_p=self.top_p,
                         max_tokens=self.max_tokens
                     )
                 reasoning_content = ""  # 定义完整思考过程
@@ -158,6 +161,9 @@ class SimpleOpenAI(BaseAPIModel):
                                 print(delta.content, end='', flush=True)
                             if delta.content:
                                 answer_content += delta.content
+                if len(answer_content) > max_out_len:
+                    warnings.warn(
+                        f"Response length {len(answer_content)} exceeds max_out_len {max_out_len}.")
                 return answer_content
             except openai.BadRequestError as e:
                 print("Bad Request Error", e)
@@ -174,5 +180,6 @@ class SimpleOpenAI(BaseAPIModel):
             # self.release()
 
 
-        warnings.warn("Failed to generate response.")
-        return "" 
+        raise RuntimeError(
+            "OpenAI API failed to generate response after {} retries".format(
+                self.retry))
