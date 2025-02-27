@@ -29,7 +29,7 @@ class SimpleOpenAI(BaseAPIModel):
                  query_per_second: int = 2,
                  max_seq_len: int = 8192,
                  meta_template: Optional[Dict] = None,
-                 retry: int = 10,
+                 retry: int = 8,
                  timeout: int = 60,
                  generation_kwargs: Dict = {
                      'temperature': 0.6,
@@ -154,7 +154,8 @@ class SimpleOpenAI(BaseAPIModel):
                         else:
                             # 开始回复
                             if delta.content != "" and is_answering == False:
-                                print("\n" + "=" * 20 + "完整回复" + "=" * 20 + "\n")
+                                if self.verbose:
+                                    print("\n" + "=" * 20 + "完整回复" + "=" * 20 + "\n")
                                 is_answering = True
                             # 打印回复过程
                             if self.verbose:
