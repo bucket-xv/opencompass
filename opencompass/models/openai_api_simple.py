@@ -165,6 +165,8 @@ class SimpleOpenAI(BaseAPIModel):
                 if len(answer_content) > max_out_len:
                     warnings.warn(
                         f"Response length {len(answer_content)} exceeds max_out_len {max_out_len}.")
+                if answer_content == "":
+                    raise Exception("Empty reply string, so let's wait and retry")
                 return answer_content
             except openai.BadRequestError as e:
                 print("Bad Request Error", e)
