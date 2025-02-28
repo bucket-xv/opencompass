@@ -11,6 +11,7 @@ from azure.core.credentials import AzureKeyCredential
 from opencompass.utils.prompt import PromptList
 from opencompass.registry import MODELS
 from .base_api import BaseAPIModel
+import re
 
 
 PromptType = Union[PromptList, str]
@@ -162,6 +163,11 @@ class SimpleOpenAI(BaseAPIModel):
                                 print(delta.content, end='', flush=True)
                             if delta.content:
                                 answer_content += delta.content
+                                
+                # Remove the thinking process
+                pattern = r'<think>.*?</think>'
+                answer_content = re.sub(pattern, '', answer_content, flags=re.DOTALL)
+
                 if len(answer_content) > max_out_len:
                     warnings.warn(
                         f"Response length {len(answer_content)} exceeds max_out_len {max_out_len}.")
