@@ -13,6 +13,8 @@ from opencompass.registry import MODELS
 from .base_api import BaseAPIModel
 import re
 
+from transformers import AutoTokenizer
+
 
 PromptType = Union[PromptList, str]
 
@@ -32,6 +34,7 @@ class SimpleOpenAI(BaseAPIModel):
                  meta_template: Optional[Dict] = None,
                  retry: int = 8,
                  timeout: int = 60,
+                 tokenizer: str = 'deepseek-ai/DeepSeek-R1',
                  generation_kwargs: Dict = {
                      'temperature': 0.6,
                      'top_p': 0.95,
@@ -58,6 +61,7 @@ class SimpleOpenAI(BaseAPIModel):
         self.temperature = generation_kwargs['temperature']
         self.top_p = generation_kwargs['top_p']
         self.verbose = generation_kwargs['verbose']
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer)
 
     def generate(
         self,
@@ -104,15 +108,18 @@ class SimpleOpenAI(BaseAPIModel):
                 else:
                     raise ValueError(f"Unknown role {item['role']}")
                 msg ['content'] = item['prompt']
-
                 messages.append(msg)
         if self.verbose:
             print(f"Messages:{messages}")
 
-        if self.type == 'openai':
-            client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=float(self.timeout))
-        elif self.type == 'azure':
+        if self.type == 'azure':
             client = ChatCompletionsClient(endpoint=self.base_url, credential=AzureKeyCredential(self.api_key))
+        else:
+            client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=float(self.timeout))
+
+        if self.type == 'huawei':
+            input_len = len(self.tokenizer.apply_chat_template(messages, tokenize=True)) + 4
+
         trial = 0
         while trial < self.retry:
             # self.acquire()
@@ -125,6 +132,15 @@ class SimpleOpenAI(BaseAPIModel):
                         top_p=self.top_p,
                         stream=True,
                         max_tokens=self.max_tokens
+                    )
+                elif self.type == 'huawei':
+                    response = client.chat.completions.create(
+                        model=self.path,
+                        messages=messages,
+                        stream=True,
+                        temperature=self.temperature,
+                        top_p=self.top_p,
+                        max_tokens=self.max_tokens - input_len
                     )
                 else:
                     response = client.chat.completions.create(
@@ -172,7 +188,9 @@ class SimpleOpenAI(BaseAPIModel):
                     warnings.warn(
                         f"Response length {len(answer_content)} exceeds max_out_len {max_out_len}.")
                 if answer_content == "":
-                    warnings.warn("Empty reply string")
+                    warnings.warn("Empty reply string, so quick retry")
+                    time.sleep(1)
+                    continue
                 return answer_content
             except openai.BadRequestError as e:
                 print("Bad Request Error", e)
