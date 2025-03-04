@@ -32,7 +32,7 @@ class SimpleOpenAI(BaseAPIModel):
                  query_per_second: int = 2,
                  max_seq_len: int = 8192,
                  meta_template: Optional[Dict] = None,
-                 retry: int = 8,
+                 retry: int = 20,
                  timeout: int = 60,
                  tokenizer: str = 'deepseek-ai/DeepSeek-R1',
                  generation_kwargs: Dict = {
@@ -196,7 +196,7 @@ class SimpleOpenAI(BaseAPIModel):
                 print("Bad Request Error", e)
                 return ""
             except Exception as e:
-                exception_backoff = 2**trial  # expontial back off
+                exception_backoff = min(2**trial, 120)  # capped expontial back off
                 print(
                     f"Rate limit exception so wait and retry {trial} after {exception_backoff} sec"
                 )
