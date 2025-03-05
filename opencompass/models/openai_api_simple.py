@@ -139,6 +139,7 @@ class SimpleOpenAI(BaseAPIModel):
         trial = 0
         while trial < self.retry:
             try:
+                self.acquire()
                 # Start conversation using Stream API
                 if self.provider == 'azure':
                     response = client.complete(
@@ -167,6 +168,7 @@ class SimpleOpenAI(BaseAPIModel):
                         top_p=self.top_p,
                         max_tokens=self.max_tokens
                     )
+                self.release()
 
                 # Parse the response
                 reasoning_content = ""  
@@ -193,7 +195,7 @@ class SimpleOpenAI(BaseAPIModel):
                                 print(delta.content, end='', flush=True)
                             if delta.content:
                                 answer_content += delta.content
-                                
+
                 # Remove the thinking process
                 pattern = r'<think>.*?</think>'
                 answer_content = re.sub(pattern, '', answer_content, flags=re.DOTALL)
