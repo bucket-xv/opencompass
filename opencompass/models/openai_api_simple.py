@@ -219,6 +219,7 @@ class SimpleOpenAI(BaseAPIModel):
             except Exception as e:
                 # give up on content filter
                 if 'content_filter' in str(e):
+                    print("Content Filter Error, so give up and return empty", e)
                     return ""
 
                 # capped expontial back off
