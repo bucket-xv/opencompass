@@ -20,14 +20,12 @@ PromptType = Union[PromptList, str]
 
 @MODELS.register_module()
 class SimpleOpenAI(BaseAPIModel):
-    """Model wrapper around 
-    """
 
     def __init__(self,
                  path: str,
                  api_key: str,
                  base_url: str,
-                 api_type: str = 'openai',
+                 provider: str = 'openai',
                  max_concurrency: int = 5,
                  query_per_second: int = 2,
                  max_seq_len: int = 8192,
@@ -41,6 +39,24 @@ class SimpleOpenAI(BaseAPIModel):
                      'top_k': 0,
                      'verbose': False,
                  }):
+        """
+        Initialize the SimpleOpenAI model.
+
+        Args:
+            path (str): The model name.
+            api_key (str): The API key for the model.
+            base_url (str): The base URL for the API.
+            provider (str, optional): The provider of the API. Defaults to 'openai'.
+            max_concurrency (int, optional): The maximum number of concurrent requests. Defaults to 5.
+            query_per_second (int, optional): The maximum number of queries per second. Defaults to 2.
+            max_seq_len (int, optional): The maximum sequence length. Defaults to 8192.
+            meta_template (Dict, optional): The meta prompt template. Defaults to None.
+            retry (int, optional): The number of retries. Defaults to 20.
+            timeout (int, optional): The timeout in seconds. Defaults to 60.
+            tokenizer (str, optional): The tokenizer to use. Defaults to 'deepseek-ai/DeepSeek-R1'.
+            generation_kwargs (Dict, optional): The generation kwargs. Defaults to {'temperature': 0.6, 'top_p': 0.95, 'top_k': 0, 'verbose': False}.
+
+        """
         super().__init__(path=path,
                          max_seq_len=max_seq_len,
                          query_per_second=query_per_second,
@@ -57,7 +73,7 @@ class SimpleOpenAI(BaseAPIModel):
         self.timeout = timeout
         self.max_concurrency = max_concurrency
         self.max_tokens = max_seq_len
-        self.type = api_type
+        self.provider = provider
         self.temperature = generation_kwargs['temperature']
         self.top_p = generation_kwargs['top_p']
         self.verbose = generation_kwargs['verbose']
@@ -112,19 +128,19 @@ class SimpleOpenAI(BaseAPIModel):
         if self.verbose:
             print(f"Messages:{messages}")
 
-        if self.type == 'azure':
+        if self.provider == 'azure':
             client = ChatCompletionsClient(endpoint=self.base_url, credential=AzureKeyCredential(self.api_key))
         else:
             client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=float(self.timeout))
 
-        if self.type == 'huawei':
+        if self.provider == 'huawei':
             input_len = len(self.tokenizer.apply_chat_template(messages, tokenize=True)) + 4
 
         trial = 0
         while trial < self.retry:
-            # self.acquire()
             try:
-                if self.type == 'azure':
+                # Start conversation using Stream API
+                if self.provider == 'azure':
                     response = client.complete(
                         model=self.path,
                         messages=messages,
@@ -133,7 +149,7 @@ class SimpleOpenAI(BaseAPIModel):
                         stream=True,
                         max_tokens=self.max_tokens
                     )
-                elif self.type == 'huawei':
+                elif self.provider == 'huawei':
                     response = client.chat.completions.create(
                         model=self.path,
                         messages=messages,
@@ -151,30 +167,28 @@ class SimpleOpenAI(BaseAPIModel):
                         top_p=self.top_p,
                         max_tokens=self.max_tokens
                     )
-                reasoning_content = ""  # 定义完整思考过程
-                answer_content = ""     # 定义完整回复
-                is_answering = False   # 判断是否结束思考过程并开始回复
+
+                # Parse the response
+                reasoning_content = ""  
+                answer_content = ""     
+                is_answering = False 
                 for chunk in response:
-                    # 如果chunk.choices为空，则打印usage
                     if not chunk.choices:
                         if self.verbose:
                             print("\nUsage:")
                             print(chunk.usage)
                     else:
                         delta = chunk.choices[0].delta
-                        # 打印思考过程
                         if hasattr(delta, 'reasoning_content') and delta.reasoning_content != None:
                             if self.verbose:
                                 print(delta.reasoning_content, end='', flush=True)
                             if delta.reasoning_content:
                                 reasoning_content += delta.reasoning_content
                         else:
-                            # 开始回复
                             if delta.content != "" and is_answering == False:
                                 if self.verbose:
-                                    print("\n" + "=" * 20 + "完整回复" + "=" * 20 + "\n")
+                                    print("\n" + "=" * 20 + "Answer" + "=" * 20 + "\n")
                                 is_answering = True
-                            # 打印回复过程
                             if self.verbose:
                                 print(delta.content, end='', flush=True)
                             if delta.content:
@@ -184,29 +198,38 @@ class SimpleOpenAI(BaseAPIModel):
                 pattern = r'<think>.*?</think>'
                 answer_content = re.sub(pattern, '', answer_content, flags=re.DOTALL)
 
+                # If processed answer exceeds max_out_len, give warning
                 if len(answer_content) > max_out_len:
                     warnings.warn(
                         f"Response length {len(answer_content)} exceeds max_out_len {max_out_len}.")
+                
+                # If processed answer is empty, quick retry
                 if answer_content == "":
                     warnings.warn("Empty reply string, so quick retry")
                     time.sleep(1)
                     continue
+                
+                # If processed answer is not empty, return
                 return answer_content
             except openai.BadRequestError as e:
                 print("Bad Request Error", e)
                 return ""
             except Exception as e:
-                exception_backoff = min(2**trial, 120)  # capped expontial back off
+                # give up on content filter
+                if 'content_filter' in str(e):
+                    return ""
+
+                # capped expontial back off
+                exception_backoff = min(2**trial, 120)  
                 print(
                     f"Rate limit exception so wait and retry {trial} after {exception_backoff} sec"
                 )
                 print(e)
                 time.sleep(exception_backoff)
                 trial += 1
-                
-            # self.release()
+            
 
-
+        # if retry is exhausted, raise error
         raise RuntimeError(
             "OpenAI API failed to generate response after {} retries".format(
                 self.retry))
